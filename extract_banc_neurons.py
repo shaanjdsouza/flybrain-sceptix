@@ -161,6 +161,20 @@ def extract_groups(meta, id_col):
         print(f"  (!) {dup} rows matched >1 group; keeping first in GROUPS order. "
               f"Tighten the regexes if this is large.")
     out = out.drop_duplicates(id_col, keep="first").reset_index(drop=True)
+    out["leg"] = ""
+    mn = out.group == "MN_leg"
+    sc = out.get("sub_class", pd.Series("", index=out.index)).fillna("").astype(str).str.lower()
+    side = out.get("soma_side", pd.Series("", index=out.index)).fillna("").astype(str).str.lower()
+    seg = pd.Series("", index=out.index)
+    seg[sc.str.contains("front")] = "T1"
+    seg[sc.str.contains("middle")] = "T2"
+    seg[sc.str.contains("hind")] = "T3"
+    lr = pd.Series("", index=out.index)
+    lr[side.str.startswith("l")] = "L"
+    lr[side.str.startswith("r")] = "R"
+    out.loc[mn, "leg"] = (seg + "_" + lr)[mn]   # e.g. T1_L, T2_R, T3_L
+    print("\n  Leg motor neurons per leg:")
+    print(out.loc[mn, "leg"].value_counts().sort_index().to_string())
     return out
 
 
@@ -179,7 +193,23 @@ def load_edges(path):
     return e.groupby(["pre", "post"], as_index=False)["syn"].sum()
 
 
-def build_test_subset(groups_df, id_col, edges, n_per_group, min_syn):
+def pick_motor_neurons(groups_df, id_col, edges, mn_per_leg, min_syn):
+    """Same number of leg motor neurons from each of the 6 legs (T1/T2/T3 x L/R).
+    With edges: prefer MNs that receive the most synapses."""
+    mn = groups_df[groups_df.group == "MN_leg"]
+    indeg = None
+    if edges is not None:
+        indeg = edges[edges.syn >= min_syn].groupby("post").syn.sum()
+    picked = []
+    for leg, d in mn.groupby("leg"):
+        ids = d[id_col]
+        if indeg is not None:
+            ids = ids.iloc[(-indeg.reindex(ids).fillna(0).values).argsort()]
+        picked += list(ids.iloc[:mn_per_leg])
+    return set(picked)
+
+
+def build_test_subset(groups_df, id_col, edges, n_per_group, min_syn, mn_per_leg=5):
     """
     Small connected circuit.
       - If edges are given: walk the chain ORN->PN->KC->MBON->DN->MN and keep
@@ -190,7 +220,10 @@ def build_test_subset(groups_df, id_col, edges, n_per_group, min_syn):
 
     if edges is None:
         sub = pd.concat([d.sample(min(len(d), n_per_group), random_state=0)
-                         for _, d in groups_df.groupby("group")], ignore_index=True)
+                         for g, d in groups_df.groupby("group") if g != "MN_leg"],
+                        ignore_index=True)
+        mn_ids = pick_motor_neurons(groups_df, id_col, None, mn_per_leg, min_syn)
+        sub = pd.concat([sub, groups_df[groups_df[id_col].isin(mn_ids)]], ignore_index=True)
         return sub, None
 
     # forward chain (order matters)
@@ -210,7 +243,7 @@ def build_test_subset(groups_df, id_col, edges, n_per_group, min_syn):
         return set(sel.groupby("pre").syn.sum().nlargest(n).index)
 
     # work backwards from motor neurons so the subset can actually reach legs
-    chosen["MN_leg"] = set(list(ids_by_group.get("MN_leg", []))[:n_per_group])
+    chosen["MN_leg"] = pick_motor_neurons(groups_df, id_col, edges, mn_per_leg, min_syn)
 
     # VNC premotor: anything (not in our groups) that feeds chosen MNs strongly
     pre_motor_all = set(e[e.post.isin(chosen["MN_leg"])].groupby("pre").syn.sum()
@@ -245,6 +278,7 @@ def main():
     ap.add_argument("--edges", default=None, help="optional edgelist (.parquet/.feather/.csv)")
     ap.add_argument("--out", default="banc_subset")
     ap.add_argument("--n-per-group", type=int, default=20)
+    ap.add_argument("--mn-per-leg", type=int, default=5, help="leg motor neurons kept per leg (6 legs)")
     ap.add_argument("--min-syn", type=int, default=5, help="min synapses for an edge to count")
     ap.add_argument("--inspect", action="store_true", help="just print columns & label values")
     args = ap.parse_args()
@@ -276,7 +310,7 @@ def main():
             print("(!) Low overlap: this edgelist is probably from a different dataset/version "
                   "than neurons.csv (e.g. FlyWire FAFB vs BANC). Connectivity will be unreliable.")
 
-    sub, sub_edges = build_test_subset(groups_df, id_col, edges, args.n_per_group, args.min_syn)
+    sub, sub_edges = build_test_subset(groups_df, id_col, edges, args.n_per_group, args.min_syn, args.mn_per_leg)
     sub.to_csv(out / "test_subset.csv", index=False)
     print(f"\nTest subset: {len(sub)} neurons")
     print(sub.group.value_counts().to_string())
