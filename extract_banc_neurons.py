@@ -248,10 +248,26 @@ def build_test_subset(groups_df, id_col, edges, n_per_group, min_syn, mn_per_leg
     # VNC premotor: anything (not in our groups) that feeds chosen MNs strongly
     pre_motor_all = set(e[e.post.isin(chosen["MN_leg"])].groupby("pre").syn.sum()
                         .nlargest(n_per_group * 2).index) - chosen["MN_leg"]
-    # DNs that feed premotor/MN
-    chosen["DN"] = top_sources(ids_by_group.get("DN", set()),
-                               pre_motor_all | chosen["MN_leg"], n_per_group)
-    chosen["MBON"] = top_sources(ids_by_group.get("MBON", set()), chosen["DN"], n_per_group)
+    # DN pool: DNs that feed premotor/MN (wide pool, narrowed below)
+    dn_pool = top_sources(ids_by_group.get("DN", set()),
+                          pre_motor_all | chosen["MN_leg"], n_per_group * 5)
+
+    # MBON -> (relay interneurons) -> DN. Direct MBON->DN links are rare in the fly,
+    # so look for 1-hop relays that receive from MBONs and send to the DN pool.
+    in_groups = set(groups_df[id_col])
+    mb_ids = ids_by_group.get("MBON", set())
+    from_mb = e[e.pre.isin(mb_ids)].groupby("post").syn.sum()
+    to_dn = e[e.post.isin(dn_pool)].groupby("pre").syn.sum()
+    both = from_mb.index.intersection(to_dn.index).difference(list(in_groups))
+    relay_score = (from_mb[both] * to_dn[both]) ** 0.5
+    chosen["relay"] = set(relay_score.nlargest(n_per_group).index)
+
+    # DNs reached from MBONs (directly or via a relay)
+    chosen["DN"] = top_targets(mb_ids | chosen["relay"], dn_pool, n_per_group)
+    if not chosen["DN"]:
+        print("(!) No DN is reachable from MBONs within 1 relay hop; using top DNs by motor output only.")
+        chosen["DN"] = set(list(dn_pool)[:n_per_group])
+    chosen["MBON"] = top_sources(mb_ids, chosen["relay"] | chosen["DN"], n_per_group)
     chosen["KC"] = top_sources(ids_by_group.get("KC", set()), chosen["MBON"], n_per_group)
     chosen["DAN"] = top_sources(ids_by_group.get("DAN", set()), chosen["MBON"], n_per_group)
     chosen["AL_PN"] = top_sources(ids_by_group.get("AL_PN", set()), chosen["KC"], n_per_group)
@@ -262,10 +278,18 @@ def build_test_subset(groups_df, id_col, edges, n_per_group, min_syn, mn_per_leg
     keep = set().union(*chosen.values())
     sub = groups_df[groups_df[id_col].isin(keep)].copy()
 
-    # add the premotor layer as its own group so the sim has a path to the legs
+    # relay + premotor layers (not in the label groups) so the sim has a path to the legs
+    rl = pd.DataFrame({id_col: sorted(chosen["relay"] - set(sub[id_col]))})
+    rl["group"] = "relay"
     pm = pd.DataFrame({id_col: sorted(pre_motor_all - keep)})
     pm["group"] = "VNC_premotor"
-    sub = pd.concat([sub, pm], ignore_index=True)
+    sub = pd.concat([sub, rl, pm], ignore_index=True)
+
+    empty = [g for g in ["ORN", "AL_PN", "KC", "DAN", "MBON", "DN", "MN_leg"]
+             if g not in set(sub.group)]
+    if empty:
+        print(f"(!) Stages with no connected neurons in the subset: {empty}. "
+              f"Try a lower --min-syn (e.g. 2) or a larger --n-per-group.")
 
     all_ids = set(sub[id_col])
     sub_edges = edges[edges.pre.isin(all_ids) & edges.post.isin(all_ids) & (edges.syn >= min_syn)]
