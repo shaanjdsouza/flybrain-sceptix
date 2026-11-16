@@ -48,6 +48,9 @@ JOINTS = ["coxa", "femur", "tibia"]
 TRIPOD_A = {"T1_L", "T3_L", "T2_R"}          # these swing together; the other 3 are anti-phase
 LEG_X = {"T1": 0.09, "T2": 0.0, "T3": -0.09}  # attachment point along the body (front = +x)
 LEG_Y = 0.05
+# pathway order used to keep only feed-forward synapses (no feedback loops)
+STAGE = {"ORN": 0, "AL_LN": 1, "AL_PN": 2, "KC": 3, "DAN": 3, "MBON": 4,
+         "relay": 5, "DN": 6, "VNC_premotor": 7, "MN_leg": 8}
 
 
 # ==========================================================================
@@ -120,7 +123,7 @@ def _nt_sign(nt):
 
 class FlyNet:
     def __init__(self, subset_csv, edges_csv, neurons_csv=None, gain=1.5, tau=0.03,
-                 norm_floor=None, eta=0.0, seed=0):
+                 norm_floor=None, eta=0.0, bias=0.0, seed=0, verbose=True, all_exc=False, feedforward=True, stim="ORN"):
         sub = _norm_cols(pd.read_csv(subset_csv))
         id_col = "root_id" if "root_id" in sub.columns else sub.columns[0]
         edges = _norm_cols(pd.read_csv(edges_csv))
@@ -129,7 +132,8 @@ class FlyNet:
         self.n = len(self.ids)
         idx = {i: k for k, i in enumerate(self.ids)}
         self.groups = {g: np.array([idx[i] for i in d[id_col]]) for g, d in sub.groupby("group")}
-        self.tau, self.eta = tau, eta
+        self.tau, self.eta, self.bias = tau, eta, bias
+        self.stim = stim
         rng = np.random.default_rng(seed)
 
         # neurotransmitter sign of each presynaptic neuron
@@ -144,6 +148,8 @@ class FlyNet:
             sign = np.array([_nt_sign(lut.get(i, "")) for i in self.ids])
         else:
             print("(!) No --neurons file: treating every synapse as excitatory.")
+        if all_exc:
+            sign = np.ones(self.n)      # diagnostic: ignore GABA/glutamate inhibition
         self.sign = sign
 
         # raw synapse matrix  W[post, pre]
@@ -152,6 +158,18 @@ class FlyNet:
         post = e.post.map(idx).to_numpy()
         raw = np.zeros((self.n, self.n))
         np.add.at(raw, (post, pre), e.syn.to_numpy(dtype=float))
+
+        # keep only forward synapses along ORN -> ... -> MN. Feedback / same-stage loops make the
+        # rescaled network self-excite (activity that no longer depends on the odor).
+        n_before = int((raw > 0).sum())
+        if feedforward:
+            stg = np.zeros(self.n, dtype=int)
+            for g, v in self.groups.items():
+                stg[v] = STAGE.get(g, 0)
+            raw = raw * (stg[:, None] > stg[None, :])
+            if verbose:
+                print(f"Feed-forward only: kept {int((raw > 0).sum())} of {n_before} connections "
+                      f"(use --allow-recurrent to keep loops).")
 
         # dopamine neurons modulate (plasticity) rather than drive
         dan = self.groups.get("DAN", np.array([], dtype=int))
@@ -173,7 +191,7 @@ class FlyNet:
             self.plastic[np.ix_(mbon, kc)] = self.W[np.ix_(mbon, kc)] > 0
 
         # odor input: each ORN has its own sensitivity; small spontaneous rate
-        self.orn = self.groups.get("ORN", np.array([], dtype=int))
+        self.orn = self.groups.get(stim, np.array([], dtype=int))   # where the "odor" input is injected
         self.orn_sens = rng.uniform(0.3, 1.0, len(self.orn))
         self.dan = dan
         self.I = np.zeros(self.n)
@@ -187,9 +205,10 @@ class FlyNet:
         for leg in LEGS:
             ii = mn.index[(mn.group == "MN_leg") & (mn.get("leg") == leg)].to_numpy()
             self.leg_mn[leg] = np.array_split(ii, 3) if len(ii) else [np.array([], dtype=int)] * 3
-        print(f"Network: {self.n} neurons, {int((self.W != 0).sum())} connections, "
-              f"{int((sign < 0).sum())} inhibitory | groups: "
-              + ", ".join(f"{g}={len(v)}" for g, v in self.groups.items()))
+        if verbose:
+            print(f"Network: {self.n} neurons, {int((self.W != 0).sum())} connections, "
+                  f"{int((sign < 0).sum())} inhibitory | groups: "
+                  + ", ".join(f"{g}={len(v)}" for g, v in self.groups.items()))
 
     def set_odor(self, level):
         self.odor = level
@@ -198,17 +217,53 @@ class FlyNet:
         self.punish = level
 
     def step(self, dt):
-        ext = self.I * 0
+        ext = np.full(self.n, self.bias)      # tonic baseline drive (lets inhibition / weak paths act)
         if len(self.orn):
             ext[self.orn] = 0.05 + self.odor * self.orn_sens
         if len(self.dan):
-            ext[self.dan] = self.punish
+            ext[self.dan] = self.bias + self.punish
         target = np.clip(self.W @ self.r + ext, 0.0, 1.0)
         self.r += dt / self.tau * (target - self.r)
         if self.eta > 0 and self.punish > 0:      # dopamine-gated KC->MBON depression
             dop = self.Dn @ self.r
             dW = -self.eta * dt * dop[:, None] * self.r[None, :] * self.W
             self.W[self.plastic] = np.maximum(0.0, self.W[self.plastic] + dW[self.plastic])
+
+    def match_layer_gains(self, dt, target=0.4, max_scale=500.0):
+        """Homeostatic gain matching: walk down the pathway and rescale each stage's incoming
+        synapses (all of them, keeping their relative strengths and signs) until the stage
+        reaches a moderate rate (~target) during odor. This fixes 'the slice holds only a small
+        fraction of the real inputs, so every layer attenuates the signal'. It cannot create a
+        path: a stage with no net-excitatory input from the stage before stays silent."""
+        order = ["AL_PN", "AL_LN", "KC", "MBON", "relay", "DN", "VNC_premotor", "MN_leg"]
+        scales, stuck = {}, []
+        self.set_odor(1.0)
+        for g in order:
+            idx = self.groups.get(g)
+            if idx is None or len(idx) == 0 or STAGE[g] <= STAGE[self.stim]:
+                continue
+            total = 1.0
+            for _ in range(25):
+                self.r[:] = 0
+                for _ in range(int(0.4 / dt)):
+                    self.step(dt)
+                rate = float(self.r[idx].mean())
+                if 0.8 * target <= rate <= 1.25 * target:
+                    break
+                f = np.clip(target / max(rate, 0.01), 0.25, 4.0)
+                if total * f > max_scale:
+                    break
+                self.W[idx, :] *= f
+                total *= f
+            self.r[:] = 0
+            for _ in range(int(0.4 / dt)):
+                self.step(dt)
+            if float(self.r[idx].mean()) < 0.5 * target:
+                stuck.append(g)
+            scales[g] = float(total)
+        self.set_odor(0.0)
+        self.r[:] = 0
+        return scales, stuck
 
     def mn_rate(self):
         return float(self.r[self.mn_all].mean()) if len(self.mn_all) else 0.0
@@ -221,14 +276,15 @@ class FlyNet:
             self.step(dt)
         base = self.mn_rate()
         r_base = self.r.copy()
+        grp_base = {g: float(self.r[v].mean()) for g, v in self.groups.items()}
         self.set_odor(1.0)
         for _ in range(int(2.0 / dt)):
             self.step(dt)
         odor = self.mn_rate()
-        per_group = {g: float(self.r[v].mean()) for g, v in self.groups.items()}
+        grp_odor = {g: float(self.r[v].mean()) for g, v in self.groups.items()}
         self.set_odor(0)
         self.r[:] = r_base
-        return base, odor, per_group
+        return base, odor, grp_base, grp_odor
 
 
 # ==========================================================================
@@ -256,6 +312,35 @@ class Gait:
 
 
 # ==========================================================================
+# 3b. Auto-tune the network so the odor actually reaches the leg motor neurons
+# ==========================================================================
+def autotune(args, dt):
+    rows = []
+    for floor in [1.0, 3.0, None]:
+        for gain in [1.5, 3.0, 5.0, 8.0]:
+            for bias in [0.0, 0.05, 0.1, 0.2]:
+                net = FlyNet(args.subset, args.edges, args.neurons, gain=gain, tau=args.tau,
+                             norm_floor=floor, bias=bias, verbose=False)
+                base, odor, g_base, g_odor = net.calibrate(dt)
+                span = odor - base
+                # prefer a big MN response that is not saturated already at rest
+                score = span - 0.5 * max(0.0, base - 0.3) - 0.5 * max(0.0, 0.05 - span)
+                rows.append(dict(norm_floor=floor, gain=gain, bias=bias, mn_rest=base,
+                                 mn_odor=odor, change=span, score=score))
+    df = pd.DataFrame(rows).sort_values("score", ascending=False)
+    print("\nAuto-tune (top 5 of %d settings):" % len(df))
+    print(df.head(5).round(3).to_string(index=False))
+    best = df.iloc[0]
+    args.norm_floor = None if pd.isna(best.norm_floor) else float(best.norm_floor)
+    args.gain, args.bias = float(best.gain), float(best.bias)
+    print(f"\nUsing norm_floor={args.norm_floor}, gain={args.gain}, bias={args.bias}")
+    if best.change < args.min_span:
+        print("(!) No setting gives a clear odor response at the motor neurons. The slice itself "
+              "probably has no connected path from the odor input to the legs: re-extract with a larger "
+              "--n-per-group (e.g. 60) and/or --min-syn 2.")
+
+
+# ==========================================================================
 # 4. Run
 # ==========================================================================
 def run(args):
@@ -268,16 +353,34 @@ def run(args):
 
     net = None
     base = span = 1.0
+    if not args.cpg_only and args.autotune:
+        autotune(args, dt)
     if not args.cpg_only:
-        net = FlyNet(args.subset, args.edges, args.neurons, gain=args.gain, tau=args.tau, eta=args.eta)
-        base, odor_resp, per_group = net.calibrate(dt)
+        net = FlyNet(args.subset, args.edges, args.neurons, gain=args.gain, tau=args.tau,
+                     norm_floor=args.norm_floor, eta=args.eta, bias=args.bias,
+                     all_exc=args.all_excitatory, feedforward=not args.allow_recurrent,
+                     stim=args.stimulate)
+        if args.match_gains:
+            scales, stuck = net.match_layer_gains(dt)
+            print("\nPer-stage synaptic gain applied (x):",
+                  {g: round(v, 1) for g, v in scales.items()})
+            if stuck:
+                print(f"(!) These stages stay silent even after rescaling: {stuck}. That means they get no "
+                      "net-excitatory input from the stage before them in this slice (try --all-excitatory "
+                      "to test whether inhibition is the blocker).")
+        base, odor_resp, g_base, g_odor = net.calibrate(dt)
         span = odor_resp - base
-        print(f"\nCalibration: leg-MN mean rate  no odor = {base:.3f}   odor = {odor_resp:.3f}")
-        print("Mean rate per group with odor:", {g: round(v, 3) for g, v in per_group.items()})
-        if span < 1e-3:
-            print("(!) The odor produces almost no change at the motor neurons. The signal is not "
-                  "propagating through this slice: try --gain 2.5, or re-extract with a larger "
-                  "--n-per-group / lower --min-syn.")
+        order = ["ORN", "AL_PN", "AL_LN", "KC", "DAN", "MBON", "relay", "DN", "VNC_premotor", "MN_leg"]
+        print("\nOdor response per stage (mean firing rate 0-1):")
+        print(f"  {'group':14s}{'no odor':>9s}{'odor':>9s}{'change':>9s}")
+        for g in order:
+            if g in g_base:
+                print(f"  {g:14s}{g_base[g]:9.3f}{g_odor[g]:9.3f}{g_odor[g] - g_base[g]:+9.3f}")
+        if span < args.min_span:
+            print(f"\n(!) The odor changes the leg motor neurons by only {span:+.3f} (need >= {args.min_span}). "
+                  "The signal dies somewhere along the chain (see the table: the first stage whose "
+                  "'change' collapses). The robot will NOT walk, because the walking drive comes from "
+                  "this response. Try --norm-floor 1, a higher --gain (3), or --bias 0.1.")
 
     gait = Gait()
     log, torso0 = [], None
@@ -290,7 +393,7 @@ def run(args):
             net.set_odor(1.0 if on else 0.0)
             net.set_punish(1.0 if args.punish_start <= t < args.punish_end else 0.0)
             net.step(dt)
-            drive = float(np.clip((net.mn_rate() - base) / (span + 1e-9), 0, 1)) if span > 1e-3 else 0.0
+            drive = float(np.clip((net.mn_rate() - base) / (span + 1e-9), 0, 1)) if span >= args.min_span else 0.0
             m = max(net.mn_rate(), 1e-6)
             gains = {}
             for leg in LEGS:
@@ -355,10 +458,26 @@ if __name__ == "__main__":
     ap.add_argument("--odor-start", type=float, default=2.0)
     ap.add_argument("--odor-end", type=float, default=10.0)
     ap.add_argument("--gain", type=float, default=1.5, help="synaptic gain of the rate network")
+    ap.add_argument("--bias", type=float, default=0.0, help="tonic baseline drive to every neuron (spontaneous activity)")
+    ap.add_argument("--norm-floor", type=float, default=None,
+                    help="min total input used to normalise a neuron's synapses (lower = stronger weak-input neurons; try 1)")
+    ap.add_argument("--min-span", type=float, default=0.05,
+                    help="smallest odor response at the leg motor neurons that counts as a real signal")
     ap.add_argument("--tau", type=float, default=0.03, help="neuron time constant (s)")
     ap.add_argument("--eta", type=float, default=0.0, help="dopamine-gated KC->MBON plasticity rate (0 = off)")
     ap.add_argument("--punish-start", type=float, default=-1, help="DAN (punishment) pulse window start (s); needs --eta > 0")
     ap.add_argument("--punish-end", type=float, default=-1)
+    ap.add_argument("--match-gains", action="store_true",
+                    help="rescale each stage's synapses so the odor signal reaches every stage (recommended)")
+    ap.add_argument("--stimulate", default="ORN", choices=["ORN", "KC", "MBON", "DN", "VNC_premotor"],
+                    help="inject the 'odor' input at this stage instead of the ORNs, to test one part of "
+                         "the chain on its own (e.g. DN = does the descending->VNC part drive the legs?)")
+    ap.add_argument("--allow-recurrent", action="store_true",
+                    help="keep feedback / same-stage synapses (default: feed-forward only)")
+    ap.add_argument("--all-excitatory", action="store_true",
+                    help="diagnostic: treat every synapse as excitatory (ignores GABA/glutamate signs)")
+    ap.add_argument("--autotune", action="store_true",
+                    help="search gain / norm-floor / bias for the setting that gives the strongest odor response")
     ap.add_argument("--viewer", action="store_true", help="open the interactive viewer (use mjpython on macOS)")
     ap.add_argument("--xml", default="hexapod.xml")
     ap.add_argument("--out", default="sim_log.csv")
