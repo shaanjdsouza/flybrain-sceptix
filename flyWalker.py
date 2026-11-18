@@ -45,16 +45,16 @@ import mujoco
 
 LEGS = ["T1_L", "T1_R", "T2_L", "T2_R", "T3_L", "T3_R"]
 JOINTS = ["coxa", "femur", "tibia"]
-TRIPOD_A = {"T1_L", "T3_L", "T2_R"}          # these swing together; the other 3 are anti-phase
-LEG_X = {"T1": 0.09, "T2": 0.0, "T3": -0.09}  # attachment point along the body (front = +x)
+TRIPOD_A = {"T1_L", "T3_L", "T2_R"}          # these swing together; the other 3 are anti-phase get what iam telling bruh ;left front and backleg and right middle leg
+LEG_X = {"T1": 0.09, "T2": 0.0, "T3": -0.09}  # attachment point along the body (front = +x) its in meters
 LEG_Y = 0.05
-# pathway order used to keep only feed-forward synapses (no feedback loops)
+# pathway order of signals  travel in feed-forward synapses (no feedback loops since its not learning. like u)
 STAGE = {"ORN": 0, "AL_LN": 1, "AL_PN": 2, "KC": 3, "DAN": 3, "MBON": 4,
          "relay": 5, "DN": 6, "VNC_premotor": 7, "MN_leg": 8}
 
 
 # ==========================================================================
-# 1. MuJoCo hexapod model
+# 1. MuJoCo hexapod model(for geeks, could be skipped) 
 # ==========================================================================
 def build_xml():
     legs_xml, act_xml = [], []
@@ -103,18 +103,17 @@ def build_xml():
 </mujoco>
 """
 
-
 # ==========================================================================
 # 2. Rate-based network built from the connectome slice
 # ==========================================================================
-def _norm_cols(df):
+def _norm_cols(df):       #removes alpha and other characters from the header and replaces with _ for uniformity and dot-attribute access XD
     df = df.copy()
     df.columns = [re.sub(r"[^a-z0-9]+", "_", str(c).strip().lower()).strip("_") for c in df.columns]
     return df
 
 
-def _nt_sign(nt):
-    """+1 excitatory (ACh / unknown), -1 inhibitory (GABA, glutamate)."""
+def _nt_sign(nt): #in flybrain each neuron sends signals to other this done which chemicals, in this case gaba  and glut (glutamate) which means stop sending signals to next neuron but in maths we take -1 (not zero cz multiplcation with give 0 XD) and oppsite to this is acetylcholine ACh or other +1 means pass the signals
+    """+1 excitatory (ACh / unknown), -1 inhibitory (GABA, glutamate)."""#this line is doc string its like comment (for those who dont know XD)
     nt = str(nt).lower()
     if "gaba" in nt or "glut" in nt:
         return -1.0
@@ -122,8 +121,12 @@ def _nt_sign(nt):
 
 
 class FlyNet:
-    def __init__(self, subset_csv, edges_csv, neurons_csv=None, gain=1.5, tau=0.03,
-                 norm_floor=None, eta=0.0, bias=0.0, seed=0, verbose=True, all_exc=False, feedforward=True, stim="ORN"):
+    def __init__(self, subset_csv, edges_csv, neurons_csv=None, gain=1.5, tau=0.03, norm_floor=None, eta=0.0, bias=0.0, seed=0, verbose=True, all_exc=False, feedforward=True, stim="ORN"):
+        #gain is to applifies the signal since i chose fraction of the brain, why : signals fades with. each layer
+        #tau is speed of signals 
+        #bias baseline or idle activity
+        #seed locked to zero for repeated experiment random stayes locked  
+
         sub = _norm_cols(pd.read_csv(subset_csv))
         id_col = "root_id" if "root_id" in sub.columns else sub.columns[0]
         edges = _norm_cols(pd.read_csv(edges_csv))
@@ -138,7 +141,7 @@ class FlyNet:
 
         # neurotransmitter sign of each presynaptic neuron
         sign = np.ones(self.n)
-        if neurons_csv:
+        if neurons_csv: 
             nm = _norm_cols(pd.read_csv(neurons_csv, low_memory=False))
             nid = "root_id" if "root_id" in nm.columns else nm.columns[0]
             nt = nm.get("verified_nt_type", pd.Series(index=nm.index, dtype=object)).copy()

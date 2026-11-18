@@ -1,0 +1,116 @@
+<mujoco model="fly_hexapod">
+  <compiler angle="radian"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"/>
+  <default>
+    <!-- legs/torso collide with the floor only (not with each other) -->
+    <geom contype="1" conaffinity="0" condim="3" friction="1.0 0.02 0.002"/>
+  </default>
+  <worldbody>
+    <light pos="0 0 2" dir="0 0 -1"/>
+    <geom name="floor" type="plane" size="5 5 0.1" rgba="0.35 0.38 0.40 1" contype="1" conaffinity="1"/>
+    <body name="torso" pos="0 0 0.115">
+      <freejoint name="root"/>
+      <geom name="torso" type="box" size="0.13 0.05 0.02" mass="0.30" rgba="0.8 0.6 0.2 1"/>
+      <geom name="head" type="sphere" pos="0.15 0 0" size="0.03" mass="0.02" rgba="0.8 0.3 0.2 1"/>
+
+      <body name="T1_L_coxa" pos="0.09 0.05 0">
+        <joint name="T1_L_coxa" type="hinge" axis="0 0 -1" range="-0.7 0.7" damping="0.05" armature="0.002"/>
+        <geom type="capsule" fromto="0 0 0 0 0.030 0" size="0.008" mass="0.010"/>
+        <body name="T1_L_femur" pos="0 0.030 0">
+          <joint name="T1_L_femur" type="hinge" axis="1 0 0" range="-0.9 0.9" damping="0.05" armature="0.002"/>
+          <geom type="capsule" fromto="0 0 0 0 0.060 0" size="0.008" mass="0.015"/>
+          <body name="T1_L_tibia" pos="0 0.060 0">
+            <joint name="T1_L_tibia" type="hinge" axis="1 0 0" range="-1.3 1.3" damping="0.05" armature="0.002"/>
+            <geom type="capsule" fromto="0 0 0 0 0.020 -0.09" size="0.007" mass="0.015"
+                  friction="1.5 0.02 0.002"/>
+          </body>
+        </body>
+      </body>
+      <body name="T1_R_coxa" pos="0.09 -0.05 0">
+        <joint name="T1_R_coxa" type="hinge" axis="0 0 1" range="-0.7 0.7" damping="0.05" armature="0.002"/>
+        <geom type="capsule" fromto="0 0 0 0 -0.030 0" size="0.008" mass="0.010"/>
+        <body name="T1_R_femur" pos="0 -0.030 0">
+          <joint name="T1_R_femur" type="hinge" axis="-1 0 0" range="-0.9 0.9" damping="0.05" armature="0.002"/>
+          <geom type="capsule" fromto="0 0 0 0 -0.060 0" size="0.008" mass="0.015"/>
+          <body name="T1_R_tibia" pos="0 -0.060 0">
+            <joint name="T1_R_tibia" type="hinge" axis="-1 0 0" range="-1.3 1.3" damping="0.05" armature="0.002"/>
+            <geom type="capsule" fromto="0 0 0 0 -0.020 -0.09" size="0.007" mass="0.015"
+                  friction="1.5 0.02 0.002"/>
+          </body>
+        </body>
+      </body>
+      <body name="T2_L_coxa" pos="0.0 0.05 0">
+        <joint name="T2_L_coxa" type="hinge" axis="0 0 -1" range="-0.7 0.7" damping="0.05" armature="0.002"/>
+        <geom type="capsule" fromto="0 0 0 0 0.030 0" size="0.008" mass="0.010"/>
+        <body name="T2_L_femur" pos="0 0.030 0">
+          <joint name="T2_L_femur" type="hinge" axis="1 0 0" range="-0.9 0.9" damping="0.05" armature="0.002"/>
+          <geom type="capsule" fromto="0 0 0 0 0.060 0" size="0.008" mass="0.015"/>
+          <body name="T2_L_tibia" pos="0 0.060 0">
+            <joint name="T2_L_tibia" type="hinge" axis="1 0 0" range="-1.3 1.3" damping="0.05" armature="0.002"/>
+            <geom type="capsule" fromto="0 0 0 0 0.020 -0.09" size="0.007" mass="0.015"
+                  friction="1.5 0.02 0.002"/>
+          </body>
+        </body>
+      </body>
+      <body name="T2_R_coxa" pos="0.0 -0.05 0">
+        <joint name="T2_R_coxa" type="hinge" axis="0 0 1" range="-0.7 0.7" damping="0.05" armature="0.002"/>
+        <geom type="capsule" fromto="0 0 0 0 -0.030 0" size="0.008" mass="0.010"/>
+        <body name="T2_R_femur" pos="0 -0.030 0">
+          <joint name="T2_R_femur" type="hinge" axis="-1 0 0" range="-0.9 0.9" damping="0.05" armature="0.002"/>
+          <geom type="capsule" fromto="0 0 0 0 -0.060 0" size="0.008" mass="0.015"/>
+          <body name="T2_R_tibia" pos="0 -0.060 0">
+            <joint name="T2_R_tibia" type="hinge" axis="-1 0 0" range="-1.3 1.3" damping="0.05" armature="0.002"/>
+            <geom type="capsule" fromto="0 0 0 0 -0.020 -0.09" size="0.007" mass="0.015"
+                  friction="1.5 0.02 0.002"/>
+          </body>
+        </body>
+      </body>
+      <body name="T3_L_coxa" pos="-0.09 0.05 0">
+        <joint name="T3_L_coxa" type="hinge" axis="0 0 -1" range="-0.7 0.7" damping="0.05" armature="0.002"/>
+        <geom type="capsule" fromto="0 0 0 0 0.030 0" size="0.008" mass="0.010"/>
+        <body name="T3_L_femur" pos="0 0.030 0">
+          <joint name="T3_L_femur" type="hinge" axis="1 0 0" range="-0.9 0.9" damping="0.05" armature="0.002"/>
+          <geom type="capsule" fromto="0 0 0 0 0.060 0" size="0.008" mass="0.015"/>
+          <body name="T3_L_tibia" pos="0 0.060 0">
+            <joint name="T3_L_tibia" type="hinge" axis="1 0 0" range="-1.3 1.3" damping="0.05" armature="0.002"/>
+            <geom type="capsule" fromto="0 0 0 0 0.020 -0.09" size="0.007" mass="0.015"
+                  friction="1.5 0.02 0.002"/>
+          </body>
+        </body>
+      </body>
+      <body name="T3_R_coxa" pos="-0.09 -0.05 0">
+        <joint name="T3_R_coxa" type="hinge" axis="0 0 1" range="-0.7 0.7" damping="0.05" armature="0.002"/>
+        <geom type="capsule" fromto="0 0 0 0 -0.030 0" size="0.008" mass="0.010"/>
+        <body name="T3_R_femur" pos="0 -0.030 0">
+          <joint name="T3_R_femur" type="hinge" axis="-1 0 0" range="-0.9 0.9" damping="0.05" armature="0.002"/>
+          <geom type="capsule" fromto="0 0 0 0 -0.060 0" size="0.008" mass="0.015"/>
+          <body name="T3_R_tibia" pos="0 -0.060 0">
+            <joint name="T3_R_tibia" type="hinge" axis="-1 0 0" range="-1.3 1.3" damping="0.05" armature="0.002"/>
+            <geom type="capsule" fromto="0 0 0 0 -0.020 -0.09" size="0.007" mass="0.015"
+                  friction="1.5 0.02 0.002"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="T1_L_coxa" joint="T1_L_coxa" kp="6" kv="0.15" ctrlrange="-0.7 0.7" forcerange="-3 3"/>
+    <position name="T1_L_femur" joint="T1_L_femur" kp="6" kv="0.15" ctrlrange="-0.9 0.9" forcerange="-3 3"/>
+    <position name="T1_L_tibia" joint="T1_L_tibia" kp="6" kv="0.15" ctrlrange="-1.3 1.3" forcerange="-3 3"/>
+    <position name="T1_R_coxa" joint="T1_R_coxa" kp="6" kv="0.15" ctrlrange="-0.7 0.7" forcerange="-3 3"/>
+    <position name="T1_R_femur" joint="T1_R_femur" kp="6" kv="0.15" ctrlrange="-0.9 0.9" forcerange="-3 3"/>
+    <position name="T1_R_tibia" joint="T1_R_tibia" kp="6" kv="0.15" ctrlrange="-1.3 1.3" forcerange="-3 3"/>
+    <position name="T2_L_coxa" joint="T2_L_coxa" kp="6" kv="0.15" ctrlrange="-0.7 0.7" forcerange="-3 3"/>
+    <position name="T2_L_femur" joint="T2_L_femur" kp="6" kv="0.15" ctrlrange="-0.9 0.9" forcerange="-3 3"/>
+    <position name="T2_L_tibia" joint="T2_L_tibia" kp="6" kv="0.15" ctrlrange="-1.3 1.3" forcerange="-3 3"/>
+    <position name="T2_R_coxa" joint="T2_R_coxa" kp="6" kv="0.15" ctrlrange="-0.7 0.7" forcerange="-3 3"/>
+    <position name="T2_R_femur" joint="T2_R_femur" kp="6" kv="0.15" ctrlrange="-0.9 0.9" forcerange="-3 3"/>
+    <position name="T2_R_tibia" joint="T2_R_tibia" kp="6" kv="0.15" ctrlrange="-1.3 1.3" forcerange="-3 3"/>
+    <position name="T3_L_coxa" joint="T3_L_coxa" kp="6" kv="0.15" ctrlrange="-0.7 0.7" forcerange="-3 3"/>
+    <position name="T3_L_femur" joint="T3_L_femur" kp="6" kv="0.15" ctrlrange="-0.9 0.9" forcerange="-3 3"/>
+    <position name="T3_L_tibia" joint="T3_L_tibia" kp="6" kv="0.15" ctrlrange="-1.3 1.3" forcerange="-3 3"/>
+    <position name="T3_R_coxa" joint="T3_R_coxa" kp="6" kv="0.15" ctrlrange="-0.7 0.7" forcerange="-3 3"/>
+    <position name="T3_R_femur" joint="T3_R_femur" kp="6" kv="0.15" ctrlrange="-0.9 0.9" forcerange="-3 3"/>
+    <position name="T3_R_tibia" joint="T3_R_tibia" kp="6" kv="0.15" ctrlrange="-1.3 1.3" forcerange="-3 3"/>
+  </actuator>
+</mujoco>
