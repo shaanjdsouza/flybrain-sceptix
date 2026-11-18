@@ -33,7 +33,8 @@ USAGE
 
 Outputs: hexapod.xml (the model) and sim_log.csv (trajectory + drive over time).
 """
-
+"""RUN: mjpython flyWalker.py --subset banc_subset/test_subset.csv --edges banc_subset/test_edges.csv --neurons neurons.csv --match-gains --stimulate DN 
+        mjpython flyWalker.py --subset banc_subset/test_subset.csv --edges banc_subset/test_edges.csv --neurons neurons.csv --match-gains --stimulate MBON --viewer"""
 import argparse
 import re
 import time
@@ -122,7 +123,7 @@ def _nt_sign(nt): #in flybrain each neuron sends signals to other this done whic
 
 class FlyNet:
     def __init__(self, subset_csv, edges_csv, neurons_csv=None, gain=1.5, tau=0.03, norm_floor=None, eta=0.0, bias=0.0, seed=0, verbose=True, all_exc=False, feedforward=True, stim="ORN"):
-        #gain is to applifies the signal since i chose fraction of the brain, why : signals fades with. each layer
+        #gain is to applifies the signal since i chose fraction of the brain, why : signals fades with each layer
         #tau is speed of signals 
         #bias baseline or idle activity
         #seed locked to zero for repeated experiment random stayes locked  
